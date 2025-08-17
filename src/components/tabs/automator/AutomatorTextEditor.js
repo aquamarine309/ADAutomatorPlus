@@ -132,6 +132,7 @@ export const AutomatorTextUI = {
   },
   setUpEditor() {
     this.editor = CodeMirror.fromTextArea(this.textArea, this.mode);
+    // 记录输入到显示的延迟
     // CodeMirror has a built-in undo/redo functionality bound to ctrl-z/ctrl-y which doesn't have an
     // easily-configured history buffer; we need to specifically cancel this event since we have our own undo
     this.editor.on("beforeChange", (_, event) => {

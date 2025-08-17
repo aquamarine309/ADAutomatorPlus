@@ -35,8 +35,8 @@ class Validator extends BaseVisitor {
   validateVariableDeclaration(ctx) {
     if (!ctx.Identifier) {
       this.addError(ctx,
-        "The variable name is not found",
-        "Please complement variable name with letters or numbers"
+        `Invalid variable name`,
+        "Variable names cannot be not same as reserved keywords."
       );
       return false;
     }
@@ -59,6 +59,14 @@ class Validator extends BaseVisitor {
       return false;
     }
     
+    if (!ctx.expression) {
+      this.addError(ctx,
+        "missing expression",
+        "Complete the expression of the variable."
+      );
+      return false;
+    }
+    
     // 3. Infer expression type
     const exprType = this.inferExpressionType(ctx.expression[0].children);
     
@@ -68,12 +76,13 @@ class Validator extends BaseVisitor {
   }
   
   checkVariableType(ctx, types) {
+    if (!this.validateVariableReference(ctx[0].children)) return false;
     const varName = ctx[0].children.Identifier[0].image;
     const type = this.variableTypes.get(varName);
     if (!types.includes(type)) {
       this.addError(ctx,
         `The type of the variable "${varName}" is ${type.name}, which is not expected`,
-        `Replace it to the other variable or expression whose type is some one of [${types.map(t => t.name).join(", ")}]`
+        `Replace it to the other variable or expression whose type is one of [${types.map(t => t.name).join(", ")}]`
       );
       return false;
     }
@@ -81,6 +90,13 @@ class Validator extends BaseVisitor {
   }
 
   validateVariableAssignment(ctx) {
+    if (!ctx.variableReference[0].children.Identifier) {
+      this.addError(ctx,
+        `The variable name is not found`,
+        "Complete the variable name."
+      );
+      return;
+    }
     const varName = ctx.variableReference[0].children.Identifier[0].image;
     const location = Validator.getPositionRange(ctx.variableReference[0]);
     
@@ -90,6 +106,14 @@ class Validator extends BaseVisitor {
         `Undefined variable: ${varName}`,
         "Please declare the variable before assigning to it.");
       return;
+    }
+    
+    if (!ctx.expression) {
+      this.addError(ctx,
+        "missing expression",
+        "Complete the expression of the variable."
+      );
+      return false;
     }
     
     // 2. Get declared type
@@ -107,6 +131,13 @@ class Validator extends BaseVisitor {
   }
 
   validateVariableReference(ctx) {
+    if (!ctx.Identifier) {
+      this.addError(ctx,
+        `The variable name is not found`,
+        "Complete the variable name."
+      );
+      return;
+    }
     const varName = ctx.Identifier[0].image;
     const location = Validator.getPositionRange(ctx.Identifier[0]);
     
@@ -114,7 +145,9 @@ class Validator extends BaseVisitor {
       this.addError(location,
         `Undefined variable: ${varName}`,
         "Please declare the variable before using it.");
+      return false;
     }
+    return true;
   }
 
   // === Helper Methods ===
@@ -150,7 +183,7 @@ class Validator extends BaseVisitor {
     }
     
     if (exprCtx.variableReference) {
-      const varName = exprCtx.Identifier[0].image;
+      const varName = exprCtx.variableReference[0].children.Identifier[0].image;
       return this.variableTypes.get(varName) || AUTOMATOR_VAR_TYPES.UNKNOWN;
     }
     
@@ -169,7 +202,7 @@ class Validator extends BaseVisitor {
   }
 
   variableReference(ctx) {
-    this.validateVariableReference(ctx);
+    return this.validateVariableReference(ctx);
   }
 
   addLexerErrors(errors) {

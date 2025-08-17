@@ -1157,7 +1157,7 @@ export const AutomatorCommands = [
       $.SUBRULE($.expression);
     },
     validate: (ctx, V) => {
-      ctx.startLine = ctx.EqualSign[0].startLine;
+      ctx.startLine = ctx.variableReference[0].children.DollarSign[0].startLine;
       return V.validateVariableAssignment(ctx);
     },
     compile: (ctx, C) => {

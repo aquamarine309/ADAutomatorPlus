@@ -154,6 +154,26 @@ class Validator extends BaseVisitor {
       this.visit(ctx.mathExpression);
     } else if (ctx.comparison) {
       this.visit(ctx.comparison);
+    } else if (ctx.ternaryExpr) {
+      this.visit(ctx.ternaryExpr);
+    }
+  }
+  
+  ternaryExpr(ctx) {
+    if (!ctx.expression || ctx.expression.length < 2) {
+      this.addError(ctx,
+        "Missing expressions",
+        "Complete the expression of the ternary expression."
+      );
+      return;
+    }
+    const type1 = this.inferExpressionType(ctx.expression[0].children);
+    const type2 = this.inferExpressionType(ctx.expression[1].children);
+    if (type1 !== type2) {
+      this.addError(ctx,
+        "The types of expressions are different",
+        "Fix the expression."
+      );
     }
   }
 
@@ -173,7 +193,12 @@ class Validator extends BaseVisitor {
     if (!exprCtx) {
       return AUTOMATOR_VAR_TYPES.UNKNOWN;
     }
-    if (exprCtx.NumberLiteral || exprCtx.AutomatorCurrency || exprCtx.mathExpression) {
+
+    if (exprCtx.comparison) {
+      return AUTOMATOR_VAR_TYPES.BOOLEAN;
+    }
+    
+    if (exprCtx.mathExpression) {
       return AUTOMATOR_VAR_TYPES.NUMBER;
     }
     
@@ -181,12 +206,12 @@ class Validator extends BaseVisitor {
       return AUTOMATOR_VAR_TYPES.STRING;
     }
     
-    if (exprCtx.comparison) {
-      return AUTOMATOR_VAR_TYPES.BOOLEAN;
-    }
-    
     if (exprCtx.duration) {
       return AUTOMATOR_VAR_TYPES.DURATION;
+    }
+    
+    if (exprCtx.ternaryExpr) {
+      return this.inferExpressionType(exprCtx.ternaryExpr[0].children.expression[0].children);
     }
     
     if (exprCtx.variableReference) {
@@ -513,59 +538,50 @@ class Validator extends BaseVisitor {
     return ctx.$cached;
   }
 
-  compareValue(ctx) {
-    if (ctx.NumberLiteral) {
-      ctx.$value = new Decimal(ctx.NumberLiteral[0].image);
-    } else if (ctx.Identifier) {
-      if (!this.isValidVarFormat(ctx.Identifier[0], AUTOMATOR_VAR_TYPES.NUMBER)) {
-        this.addError(ctx, `Constant ${ctx.Identifier[0].image} cannot be used for comparison`,
-          `Ensure that ${ctx.Identifier[0].image} contains a properly-formatted number and not a Time Study string`);
-      }
-      const varLookup = this.lookupVar(ctx.Identifier[0], AUTOMATOR_VAR_TYPES.NUMBER);
-      if (varLookup) ctx.$value = ctx.Identifier[0].image;
-    } else if (ctx.variableReference) {
-      if (this.checkVariableType(ctx.variableReference, [AUTOMATOR_VAR_TYPES.NUMBER])) {
-        ctx.$value = "$".concat(ctx.variableReference[0].children.Identifier[0].image);
-      } else {
-        ctx.$value = null;
-      }
-    }
-  }
-
   comparison(ctx) {
     super.comparison(ctx);
     if (ctx.BooleanValue) {
       return;
     }
-    if (!ctx.compareValue || ctx.compareValue[0].recoveredNode ||
-      ctx.compareValue.length !== 2 || ctx.compareValue[1].recoveredNode) {
+    if (!ctx.factor || ctx.factor[0].recoveredNode ||
+      ctx.factor.length !== 2 || ctx.factor[1].recoveredNode) {
       this.addError(ctx, "Missing value for comparison", "Ensure that the comparison has two values");
     }
-    for (const val of ctx.compareValue) {
+    for (const val of ctx.factor) {
       this.visit([val]);
     }
     if (!ctx.ComparisonOperator || ctx.ComparisonOperator[0].isInsertedInRecovery) {
       this.addError(ctx, "Missing comparison operator (<, >, <=, >=)", "Insert the appropriate comparison operator");
       return;
     }
-    if (ctx.ComparisonOperator[0].tokenType === T.OpEQ) {
-      this.addError(ctx, "Please use an inequality comparison (>, <, >=, <=)",
-        "Comparisons cannot be done with equality, only with inequality operators");
+  }
+  
+  factor(ctx) {
+    if (ctx.variableReference) {
+      this.checkVariableType(ctx.variableReference, [AUTOMATOR_VAR_TYPES.NUMBER]);
+    }
+  }
+  
+  exponentialExpr(ctx) {
+    if (ctx.factor) {
+      this.visit(ctx.factor);
+    }
+  }
+  
+  multiplicativeExpr(ctx) {
+    if (ctx.exponentialExpr) {
+      for (const cv of ctx.exponentialExpr) this.visit(cv);
+    }
+  }
+  
+  additiveExpr(ctx) {
+    if (ctx.multiplicativeExpr) {
+      for (const cv of ctx.multiplicativeExpr) this.visit(cv);
     }
   }
   
   mathExpression(ctx) {
-    if (!ctx.compareValue || ctx.compareValue[0].recoveredNode ||
-      ctx.compareValue.length !== 2 || ctx.compareValue[1].recoveredNode) {
-      this.addError(ctx, "Missing value for calculation", "Ensure that the expression has two values");
-    }
-    for (const val of ctx.compareValue) {
-      this.visit([val]);
-    }
-    if (!ctx.NumberOperator || ctx.NumberOperator[0].isInsertedInRecovery) {
-      this.addError(ctx, "Missing calculation operator (+, -, *, /)", "Insert the appropriate calculation operator");
-      return;
-    }
+    this.visit(ctx.additiveExpr);
   }
 
   badCommand(ctx) {
@@ -646,10 +662,90 @@ class Compiler extends BaseVisitor {
     };
   }
   
+  mathExpression(ctx) {
+    return this.visit(ctx.additiveExpr || ctx.multiplicativeExpr || ctx.exponentialExpr || ctx.factor);
+  }
+
+  additiveExpr(ctx) {
+    return this._buildBinaryOperation(
+      ctx.multiplicativeExpr, 
+      ctx.AdditiveOperator,
+      (op, left, right) => {
+        switch (op) {
+          case '+': return left.plus(right);
+          case '-': return left.minus(right);
+        }
+      }
+    );
+  }
+
+  multiplicativeExpr(ctx) {
+    return this._buildBinaryOperation(
+      ctx.exponentialExpr, 
+      ctx.MultiplicativeOperator,
+      (op, left, right) => {
+        switch (op) {
+          case '*': return left.times(right);
+          case '/': return left.div(right);
+          case '%': return left.mod(right);
+        }
+      }
+    );
+  }
+
+  exponentialExpr(ctx) {
+    const left = this.visit(ctx.factor[0]);
+    if (!ctx.ExponentialOperator) return left;
+
+    const right = this.visit(ctx.exponentialExpr[0]);
+    return () => {
+      const base = left();
+      const exponent = right();
+      return base.pow(exponent);
+    };
+  }
+
+  factor(ctx) {
+    const mul = ctx.OpMinus ? -1 : 1;
+    if (ctx.NumberLiteral) {
+      const num = ctx.NumberLiteral[0].image;
+      return () => new Decimal(num).times(mul);
+    }
+    if (ctx.variableReference) {
+      return () => this.visit(ctx.variableReference)().times(mul);
+    }
+    if (ctx.mathExpression) {
+      return () => this.visit(ctx.mathExpression)().times(mul);
+    }
+    if (ctx.AutomatorCurrency) {
+      return () => ctx.AutomatorCurrency[0].tokenType.$getter().times(mul);
+    }
+  }
+
+  _buildBinaryOperation(operands, operators, operationFn) {
+    let leftFunc = this.visit(operands[0]);
+    
+    for (let i = 0; i < operators?.length; i++) {
+      const rightFunc = this.visit(operands[i + 1]);
+      const op = operators[i].image;
+      
+      const currentLeft = leftFunc;
+      const currentRight = rightFunc;
+      
+      leftFunc = () => {
+        const leftVal = currentLeft();
+        const rightVal = currentRight();
+        return operationFn(op, leftVal, rightVal);
+      };
+    }
+    
+    return leftFunc;
+  }
+    
   expression(ctx) {
     let value;
     if (ctx.StringLiteral || ctx.StringLiteralSingleQuote) {
-      value = (ctx.StringLiteral || StringLiteralSingleQuote)[0].image;
+      value = (ctx.StringLiteral || ctx.StringLiteralSingleQuote)[0].image;
     } else if (ctx.NumberLiteral) {
       value = Decimal.fromString(ctx.NumberLiteral[0].image);
     } else if (ctx.AutomatorCurrency) {
@@ -660,61 +756,25 @@ class Compiler extends BaseVisitor {
       return this.visit(ctx.variableReference);
     } else if (ctx.mathExpression) {
       return this.visit(ctx.mathExpression);
+    } else if (ctx.ternaryExpr) {
+      return this.visit(ctx.ternaryExpr);
     }
     return () => value;
   }
 
   comparison(ctx) {
     if (ctx.BooleanValue) return () => ctx.BooleanValue[0].tokenType.$value;
-    const getters = ctx.compareValue.map(cv => {
-      if (cv.children.AutomatorCurrency) return cv.children.AutomatorCurrency[0].tokenType.$getter;
-      if (cv.children.variableReference) return this.visit(cv.children.variableReference);
-      const val = cv.children.$value;
-      if (typeof val === "string") {
-        if (val.startsWith("$")) return () => player.reality.automator.variables[val.slice(1)];
-        return () => player.reality.automator.constants[val];
-      }
-      return () => val;
-    });
-    // Some currencies are locked and should always evaluate to false if they're attempted to be used
-    const canUseInComp = ctx.compareValue.map(cv => {
-      if (cv.children.AutomatorCurrency) {
-        const unlockedFn = cv.children.AutomatorCurrency[0].tokenType.$unlocked;
-        return unlockedFn ? unlockedFn() : true;
-      }
-      // In this case, it's a constant (either automator-defined or literal)
-      return true;
-    });
-
-    if (!canUseInComp[0] || !canUseInComp[1]) return () => false;
+    const getters = ctx.factor.map(cv => this.visit(cv));
     const compareFun = ctx.ComparisonOperator[0].tokenType.$compare;
     return () => compareFun(getters[0](), getters[1]());
   }
   
-  mathExpression(ctx) {
-    const getters = ctx.compareValue.map(cv => {
-      if (cv.children.AutomatorCurrency) return cv.children.AutomatorCurrency[0].tokenType.$getter;
-      if (cv.children.variableReference) return this.visit(cv.children.variableReference);
-      const val = cv.children.$value;
-      if (typeof val === "string") {
-        if (val.startsWith("$")) return () => player.reality.automator.variables[val.slice(1)];
-        return () => player.reality.automator.constants[val];
-      }
-      return () => val;
-    });
-    // Some currencies are locked and should always evaluate to false if they're attempted to be used
-    const canUseInComp = ctx.compareValue.map(cv => {
-      if (cv.children.AutomatorCurrency) {
-        const unlockedFn = cv.children.AutomatorCurrency[0].tokenType.$unlocked;
-        return unlockedFn ? unlockedFn() : true;
-      }
-      // In this case, it's a constant (either automator-defined or literal)
-      return true;
-    });
-
-    if (!canUseInComp[0] || !canUseInComp[1]) return () => DC.D0;
-    const compareFun = ctx.NumberOperator[0].tokenType.$method;
-    return () => compareFun(getters[0](), getters[1]());
+  ternaryExpr(ctx) {
+    const condition = this.visit(ctx.comparison[0]);
+    const trueExpr = this.visit(ctx.expression[0]);
+    const falseExpr = this.visit(ctx.expression[1]);
+    
+    return () => condition() ? trueExpr() : falseExpr();
   }
 
   block(ctx) {
@@ -758,18 +818,7 @@ class Blockifier extends BaseVisitor {
   }
 
   comparison(ctx) {
-    const parseInput = index => {
-      const comp = ctx.compareValue[index];
-      const isCurrency = Boolean(comp.children.AutomatorCurrency);
-      if (isCurrency) return comp.children.AutomatorCurrency[0].image;
-      return comp.children.$value;
-    };
-
-    return {
-      compOperator: ctx.ComparisonOperator[0].image,
-      genericInput1: parseInput(0),
-      genericInput2: parseInput(1),
-    };
+    return {};
   }
 
   script(ctx) {

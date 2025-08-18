@@ -1,10 +1,10 @@
-import { EOF, Parser } from "../../../modules/chevrotain.js";
+import { EOF, CstParser } from "../../../modules/chevrotain.js";
 
 import { automatorTokens, tokenMap as T } from "./lexer.js";
 import { AutomatorCommands } from "./automator-commands.js";
 
 // ----------------- parser -----------------
-class AutomatorParser extends Parser {
+class AutomatorParser extends CstParser {
   constructor() {
     super(automatorTokens, {
       recoveryEnabled: true,
@@ -63,19 +63,12 @@ class AutomatorParser extends Parser {
     $.RULE("comparison", () => $.OR([
       {
         ALT: () => {
-          $.SUBRULE($.compareValue);
+          $.SUBRULE($.factor);
           $.CONSUME(T.ComparisonOperator);
-          $.SUBRULE2($.compareValue);
+          $.SUBRULE2($.factor);
         }
       },
       { ALT: () => $.CONSUME(T.BooleanValue) }
-    ]));
-
-    $.RULE("compareValue", () => $.OR([
-      { ALT: () => $.CONSUME(T.NumberLiteral) },
-      { ALT: () => $.CONSUME(T.Identifier) },
-      { ALT: () => $.CONSUME(T.AutomatorCurrency) },
-      { ALT: () => $.SUBRULE($.variableReference) }
     ]));
 
     $.RULE("duration", () => {
@@ -128,16 +121,28 @@ class AutomatorParser extends Parser {
       $.CONSUME(T.AutomatorCurrency);
     });
     
-    $.RULE("expression", () => {
-      $.OR([
-        { ALT: () => $.SUBRULE($.comparison) },
-        { ALT: () => $.SUBRULE($.mathExpression) },
-        { ALT: () => $.CONSUME(T.NumberLiteral) },
-        { ALT: () => $.CONSUME(T.StringLiteral) },
-        { ALT: () => $.CONSUME(T.AutomatorCurrency) },
-        { ALT: () => $.SUBRULE($.variableReference) }
-      ]);
+    $.RULE("ternaryExpr", () => {
+      $.CONSUME(T.LParen);
+      $.SUBRULE($.comparison);
+      $.CONSUME(T.QuestionMark);
+      $.SUBRULE($.expression);
+      $.CONSUME(T.Colon);
+      $.SUBRULE2($.expression); 
+      $.CONSUME(T.RParen);
     });
+    
+    $.RULE("expression", () => $.OR(
+      {
+        IGNORE_AMBIGUITIES: true,
+        DEF: [
+          { ALT: () => $.SUBRULE($.comparison) },
+          { ALT: () => $.SUBRULE($.mathExpression) },
+          { ALT: () => $.SUBRULE($.variableReference) },
+          { ALT: () => $.CONSUME(T.StringLiteral) },
+          { ALT: () => $.CONSUME(T.StringLiteralSingleQuote) }
+        ]
+      })
+    );
     
     $.RULE("variableReference", () => {
       $.CONSUME(T.DollarSign);
@@ -145,9 +150,45 @@ class AutomatorParser extends Parser {
     });
     
     $.RULE("mathExpression", () => {
-      $.SUBRULE($.compareValue);
-      $.CONSUME(T.NumberOperator);
-      $.SUBRULE1($.compareValue);
+      $.SUBRULE($.additiveExpr);
+    });
+
+    $.RULE("additiveExpr", () => {      // + -
+      $.SUBRULE($.multiplicativeExpr);
+      $.MANY(() => {
+        $.CONSUME(T.AdditiveOperator);
+        $.SUBRULE2($.multiplicativeExpr);
+      });
+    });
+    
+    $.RULE("multiplicativeExpr", () => { // * / %
+      $.SUBRULE($.exponentialExpr);
+      $.MANY(() => {
+        $.CONSUME(T.MultiplicativeOperator);
+        $.SUBRULE2($.exponentialExpr);
+      });
+    });
+    
+    $.RULE("exponentialExpr", () => {   // ^
+      $.SUBRULE($.factor);
+      $.OPTION(() => {
+        $.CONSUME(T.ExponentialOperator);
+        $.SUBRULE($.exponentialExpr);
+      });
+    });
+        
+    $.RULE("factor", () => {
+      $.OPTION(() => $.CONSUME(T.OpMinus));
+      $.OR([
+        { ALT: () => $.CONSUME(T.NumberLiteral) },
+        { ALT: () => $.CONSUME(T.AutomatorCurrency) },
+        { ALT: () => $.SUBRULE($.variableReference) },
+        { ALT: () => {
+          $.CONSUME(T.LParen);
+          $.SUBRULE($.mathExpression);
+          $.CONSUME(T.RParen);
+        }}
+      ]);
     });
     
     // Very important to call this after all the rules have been setup.

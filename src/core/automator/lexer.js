@@ -43,12 +43,12 @@ const EOL = createToken({
 
 const StringLiteral = createToken({
   name: "StringLiteral",
-  pattern: /".*"/,
+  pattern: /".*?"/,
 });
 
 const StringLiteralSingleQuote = createToken({
   name: "StringLiteralSingleQuote",
-  pattern: /'.*'/,
+  pattern: /'.*?'/,
 });
 
 const Comment = createToken({
@@ -76,10 +76,26 @@ const ComparisonOperator = createToken({
   pattern: Lexer.NA,
 });
 
-const NumberOperator = createToken({
-  name: "NumberOperator",
+const AdditiveOperator = createToken({
+  name: "AdditiveOperator",
   pattern: Lexer.NA,
 });
+createInCategory(AdditiveOperator, "OpPlus", /\+/);
+createInCategory(AdditiveOperator, "OpMinus", /-/);
+
+const MultiplicativeOperator = createToken({
+  name: "MultiplicativeOperator",
+  pattern: Lexer.NA,
+});
+createInCategory(MultiplicativeOperator, "OpMul", /\*/);
+createInCategory(MultiplicativeOperator, "OpDiv", /\//);
+createInCategory(MultiplicativeOperator, "OpMod", /%/);
+
+const ExponentialOperator = createToken({
+  name: "ExponentialOperator",
+  pattern: Lexer.NA
+});
+createInCategory(ExponentialOperator, "OpPow", /\^/);
 
 const AutomatorCurrency = createCategory("AutomatorCurrency");
 const PrestigeEvent = createCategory("PrestigeEvent");
@@ -111,31 +127,6 @@ const EqualSign = createToken({
   name: "EqualSign",
   pattern: /=/,
   label: "="
-});
-
-createInCategory(NumberOperator, "OpPlus", /\+/, {
-  $autocomplete: "+",
-  $method: (a, b) => Decimal.plus(a, b),
-});
-
-createInCategory(NumberOperator, "OpMinus", /-/, {
-  $autocomplete: "-",
-  $method: (a, b) => Decimal.minus(a, b),
-});
-
-createInCategory(NumberOperator, "OpMul", /\*/, {
-  $autocomplete: "*",
-  $method: (a, b) =>Decimal.mul(a, b),
-});
-
-createInCategory(NumberOperator, "OpDiv", /\//, {
-  $autocomplete: "/",
-  $method: (a, b) => Decimal.div(a, b),
-});
-
-createInCategory(NumberOperator, "OpMod", /%/, {
-  $autocomplete: "%",
-  $method: (a, b) => [a, b].some(x => Decimal.abs(x).gt(Number.MAX_SAFE_INTEGER)) ? DC.D0 : new Decimal(a.toNumber() % b.toNumber()),
 });
 
 createInCategory(AutomatorCurrency, "EP", /ep/i, { $getter: () => Currency.eternityPoints.value });
@@ -367,6 +358,7 @@ createKeyword("Use", /use/i);
 createKeyword("Wait", /wait/i);
 createKeyword("While", /while/i);
 createKeyword("Var", /var/i);
+createKeyword("Delete", /delete/i);
 createKeyword("BlackHole", /black[ \t]+hole/i, {
   $autocomplete: "black hole",
   $unlocked: () => BlackHole(1).isUnlocked,
@@ -392,18 +384,27 @@ const ECLiteral = createToken({
 
 const LCurly = createToken({ name: "LCurly", pattern: /[ \t]*{/ });
 const RCurly = createToken({ name: "RCurly", pattern: /[ \t]*}/ });
+const LParen = createToken({ name: "LParen", pattern: /\(/ });
+const RParen = createToken({ name: "RParen", pattern: /\)/ });
+
 const Comma = createToken({ name: "Comma", pattern: /,/ });
 const Pipe = createToken({ name: "Pipe", pattern: /\|/, label: "|" });
 const Exclamation = createToken({ name: "Exclamation", pattern: /!/, label: "!" });
 const DollarSign = createToken({ name: "DollarSign", pattern: /\$/ });
+const QuestionMark = createToken({ name: "QuestionMark", pattern: /\?/ });
+const Colon = createToken({ name: "Colon", pattern: /:/ });
 
 // The order here is the order the lexer looks for tokens in.
 export const automatorTokens = [
   HSpace, StringLiteral, StringLiteralSingleQuote, Comment, EOL,
+  NumberLiteral,
   ComparisonOperator, ...tokenLists.ComparisonOperator,
-  NumberOperator, ...tokenLists.NumberOperator,
+  AdditiveOperator, ...tokenLists.AdditiveOperator,
+  MultiplicativeOperator, ...tokenLists.MultiplicativeOperator,
+  ExponentialOperator, ...tokenLists.ExponentialOperator,
+  LParen, RParen, QuestionMark, Colon,
   LCurly, RCurly, Comma, DollarSign, EqualSign, Pipe, Exclamation,
-  BlackHoleStr, NumberLiteral,
+  BlackHoleStr,
   BooleanValue, ...tokenLists.BooleanValue,
   AutomatorCurrency, ...tokenLists.AutomatorCurrency,
   ECLiteral,
@@ -417,7 +418,10 @@ export const automatorTokens = [
 // Labels only affect error messages and Diagrams.
 LCurly.LABEL = "'{'";
 RCurly.LABEL = "'}'";
+LCurly.LABEL = "'('";
+RCurly.LABEL = "')'";
 NumberLiteral.LABEL = "Number";
+BooleanValue.LABEL = "Boolean";
 Comma.LABEL = "❟";
 
 export const lexer = new Lexer(automatorTokens, {

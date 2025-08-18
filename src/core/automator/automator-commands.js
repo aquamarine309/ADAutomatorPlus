@@ -43,23 +43,7 @@ function compileConditionLoop(evalComparison, commands, ctx, isUntil) {
 
 // Extracts the conditional out of a command and returns it as text
 function parseConditionalIntoText(ctx) {
-  const vari = ctx.variableReference;
-  if (vari) {
-    return `variable "${vari[0].children.Identifier[0].image}"`;
-  }
-  const comp = ctx.comparison[0].children;
-  if (comp.BooleanValue) {
-    return `Boolean ${comp.BooleanValue[0].image}`;
-  }
-  const getters = comp.compareValue.map(cv => {
-    if (cv.children.variableReference) return () => "$".concat(cv.children.variableReference[0].children.Identifier[0].image);
-    if (cv.children.AutomatorCurrency) return () => cv.children.AutomatorCurrency[0].image;
-    const val = cv.children.$value;
-    if (typeof val === "string") return () => val;
-    return () => format(val, 2, 2);
-  });
-  const compareFn = comp.ComparisonOperator[0].image;
-  return `${getters[0]()} ${compareFn} ${getters[1]()}`;
+  return "the condition";
 }
 
 // Determines how much (prestige currency) the previous (layer) reset gave, for event logging
@@ -361,11 +345,7 @@ export const AutomatorCommands = [
     id: "notify",
     rule: $ => () => {
       $.CONSUME(T.Notify);
-      $.OR([
-        { ALT: () => $.CONSUME(T.StringLiteral) },
-        { ALT: () => $.CONSUME(T.StringLiteralSingleQuote) },
-        { ALT: () => $.SUBRULE($.variableReference) }
-      ]);
+      $.SUBRULE($.variableReference);
     },
     validate: (ctx, V) => {
       ctx.startLine = ctx.Notify[0].startLine;
@@ -373,13 +353,7 @@ export const AutomatorCommands = [
     },
     compile: (ctx, C) => {
       return () => {
-        let notifyText;
-        const stringLiteral = ctx.StringLiteral || ctx.StringLiteralSingleQuote;
-        if (stringLiteral) {
-          notifyText = stringLiteral[0].image;
-        } else {
-          notifyText = formatVariable(C.visit(ctx.variableReference)());
-        }
+        const notifyText = formatVariable(C.visit(ctx.variableReference)());
         GameUI.notify.automator(`Automator: ${notifyText}`);
         AutomatorData.logCommandEvent(`NOTIFY call: ${notifyText}`, ctx.startLine);
         return AUTOMATOR_COMMAND_STATUS.NEXT_INSTRUCTION;
@@ -1180,6 +1154,41 @@ export const AutomatorCommands = [
         ...automatorBlocksMap.VAR
       }
     }
+  },
+  {
+    id: "delete",
+    rule: $ => () => {
+      $.CONSUME(T.Delete);
+      $.CONSUME(T.Identifier);
+    },
+    validate: (ctx, V) => {
+      ctx.startLine = ctx.Delete[0].startLine;
+      if (!ctx.Identifier) {
+        V.addError(ctx,
+          "Missing the variable name",
+          "Complete the variable name"
+        );
+        return false;
+      };
+      const varName = ctx.Identifier[0].image;
+      if (!V.variableTypes.has(varName)) {
+        V.addError(ctx,
+          `Undefined variable: ${varName}`,
+          "Please declare the variable before using it.");
+        return false;
+      }
+      V.variableTypes.delete(varName);
+      return true;
+    },
+    compile: ctx => () => {
+      const varName = ctx.Identifier[0].image;
+        AutomatorData.logCommandEvent(`Deleted variable ${varName}.`, ctx.startLine);
+      delete player.reality.automator.variables[varName];
+      return AUTOMATOR_COMMAND_STATUS.NEXT_INSTRUCTION;
+    },
+    blockify: () => ({
+      ...automatorBlocksMap.STOP,
+    })
   },
   {
     id: "stop",

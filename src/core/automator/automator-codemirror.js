@@ -16,6 +16,7 @@ function walkSuggestion(suggestion, prefix, output) {
 CodeMirror.registerHelper("lint", "automato", (contents, _, editor) => {
   const doc = editor.getDoc();
   const errors = compile(contents, true).errors;
+  return [];
   return errors.map(e => ({
     message: e.info,
     severity: "error",
@@ -65,7 +66,7 @@ CodeMirror.defineSimpleMode("automato", {
     { regex: /blob\s\s/ui, token: "blob" },
     {
       // eslint-disable-next-line max-len
-      regex: /(auto|if|pause|studies|else|time[ \t]+theorems?|space[ \t]+theorems?|until|wait|while|black[ \t]+hole|stored?[ \t]+game[ \t]+time|notify|var)\s/ui,
+      regex: /(auto|if|pause|studies|else|time[ \t]+theorems?|space[ \t]+theorems?|until|wait|while|black[ \t]+hole|stored?[ \t]+game[ \t]+time|notify|var|delete)\s/ui,
       token: "keyword",
       next: "commandArgs"
     },

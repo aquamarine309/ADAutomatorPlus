@@ -64,6 +64,10 @@ Decimal.maxReducer = function(a, b) {
   return Decimal.max(a, b);
 };
 
+Decimal.prototype.mod = function(val) {
+  return this.minus(this.div(val).floor().times(val));
+}
+
 Decimal.prototype.copyFrom = function(decimal) {
   if (!(decimal instanceof Decimal) && !(decimal instanceof DecimalCurrency)) {
     throw "Copy value is not Decimal or DecimalCurrency";

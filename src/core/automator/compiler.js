@@ -31,7 +31,6 @@ class Validator extends BaseVisitor {
     this.errorCount = lexResult.errors.length + this.errors.length + parser.errors.length;
   }
 
-  // === Core Validation Methods ===
   validateVariableDeclaration(ctx) {
     if (!ctx.Identifier) {
       this.addError(ctx,
@@ -68,6 +67,7 @@ class Validator extends BaseVisitor {
     }
     
     // 3. Infer expression type
+    this.visit(ctx.expression);
     const exprType = this.inferExpressionType(ctx.expression[0].children);
     
     // 4. Store variable type
@@ -120,10 +120,11 @@ class Validator extends BaseVisitor {
     const declaredType = this.variableTypes.get(varName);
     
     // 3. Infer expression type
+    this.visit(ctx.expression);
     const exprType = this.inferExpressionType(ctx.expression[0].children);
     
     // 4. Check type compatibility
-    if (!this.areTypesCompatible(declaredType, exprType)) {
+    if (declaredType !== exprType) {
       this.addError(location,
         `Type mismatch: Cannot assign ${exprType.name} to ${declaredType.name} variable`,
         `Try converting the value to the correct type.`);
@@ -145,9 +146,15 @@ class Validator extends BaseVisitor {
       this.addError(location,
         `Undefined variable: ${varName}`,
         "Please declare the variable before using it.");
-      return false;
     }
-    return true;
+  }
+  
+  expression(ctx) {
+    if (ctx.mathExpression) {
+      this.visit(ctx.mathExpression);
+    } else if (ctx.comparison) {
+      this.visit(ctx.comparison);
+    }
   }
 
   // === Helper Methods ===
@@ -166,7 +173,7 @@ class Validator extends BaseVisitor {
     if (!exprCtx) {
       return AUTOMATOR_VAR_TYPES.UNKNOWN;
     }
-    if (exprCtx.NumberLiteral || exprCtx.AutomatorCurrency) {
+    if (exprCtx.NumberLiteral || exprCtx.AutomatorCurrency || exprCtx.mathExpression) {
       return AUTOMATOR_VAR_TYPES.NUMBER;
     }
     
@@ -188,17 +195,6 @@ class Validator extends BaseVisitor {
     }
     
     return AUTOMATOR_VAR_TYPES.UNKNOWN;
-  }
-
-  areTypesCompatible(targetType, sourceType) {
-    // Allow number to duration conversion
-    if (targetType === AUTOMATOR_VAR_TYPES.DURATION && 
-        sourceType === AUTOMATOR_VAR_TYPES.NUMBER) {
-      return true;
-    }
-    
-    // Strict type matching for others
-    return targetType === sourceType;
   }
 
   variableReference(ctx) {
@@ -527,27 +523,48 @@ class Validator extends BaseVisitor {
       }
       const varLookup = this.lookupVar(ctx.Identifier[0], AUTOMATOR_VAR_TYPES.NUMBER);
       if (varLookup) ctx.$value = ctx.Identifier[0].image;
+    } else if (ctx.variableReference) {
+      if (this.checkVariableType(ctx.variableReference, [AUTOMATOR_VAR_TYPES.NUMBER])) {
+        ctx.$value = "$".concat(ctx.variableReference[0].children.Identifier[0].image);
+      } else {
+        ctx.$value = null;
+      }
     }
   }
 
   comparison(ctx) {
     super.comparison(ctx);
+    if (ctx.BooleanValue) {
+      return;
+    }
     if (!ctx.compareValue || ctx.compareValue[0].recoveredNode ||
       ctx.compareValue.length !== 2 || ctx.compareValue[1].recoveredNode) {
       this.addError(ctx, "Missing value for comparison", "Ensure that the comparison has two values");
     }
-    if (!ctx.compareValue.filter(val => val.children.variableReference)
-      .some(val => this.checkVariableType(val.children.variableReference, [AUTOMATOR_VAR_TYPES.NUMBER]))
-    ) {
-      return;
+    for (const val of ctx.compareValue) {
+      this.visit([val]);
     }
     if (!ctx.ComparisonOperator || ctx.ComparisonOperator[0].isInsertedInRecovery) {
       this.addError(ctx, "Missing comparison operator (<, >, <=, >=)", "Insert the appropriate comparison operator");
       return;
     }
-    if (ctx.ComparisonOperator[0].tokenType === T.OpEQ || ctx.ComparisonOperator[0].tokenType === T.EqualSign) {
+    if (ctx.ComparisonOperator[0].tokenType === T.OpEQ) {
       this.addError(ctx, "Please use an inequality comparison (>, <, >=, <=)",
         "Comparisons cannot be done with equality, only with inequality operators");
+    }
+  }
+  
+  mathExpression(ctx) {
+    if (!ctx.compareValue || ctx.compareValue[0].recoveredNode ||
+      ctx.compareValue.length !== 2 || ctx.compareValue[1].recoveredNode) {
+      this.addError(ctx, "Missing value for calculation", "Ensure that the expression has two values");
+    }
+    for (const val of ctx.compareValue) {
+      this.visit([val]);
+    }
+    if (!ctx.NumberOperator || ctx.NumberOperator[0].isInsertedInRecovery) {
+      this.addError(ctx, "Missing calculation operator (+, -, *, /)", "Insert the appropriate calculation operator");
+      return;
     }
   }
 
@@ -641,16 +658,22 @@ class Compiler extends BaseVisitor {
       return this.visit(ctx.comparison);
     } else if (ctx.variableReference) {
       return this.visit(ctx.variableReference);
+    } else if (ctx.mathExpression) {
+      return this.visit(ctx.mathExpression);
     }
     return () => value;
   }
 
   comparison(ctx) {
+    if (ctx.BooleanValue) return () => ctx.BooleanValue[0].tokenType.$value;
     const getters = ctx.compareValue.map(cv => {
       if (cv.children.AutomatorCurrency) return cv.children.AutomatorCurrency[0].tokenType.$getter;
       if (cv.children.variableReference) return this.visit(cv.children.variableReference);
       const val = cv.children.$value;
-      if (typeof val === "string") return () => player.reality.automator.constants[val];
+      if (typeof val === "string") {
+        if (val.startsWith("$")) return () => player.reality.automator.variables[val.slice(1)];
+        return () => player.reality.automator.constants[val];
+      }
       return () => val;
     });
     // Some currencies are locked and should always evaluate to false if they're attempted to be used
@@ -665,6 +688,32 @@ class Compiler extends BaseVisitor {
 
     if (!canUseInComp[0] || !canUseInComp[1]) return () => false;
     const compareFun = ctx.ComparisonOperator[0].tokenType.$compare;
+    return () => compareFun(getters[0](), getters[1]());
+  }
+  
+  mathExpression(ctx) {
+    const getters = ctx.compareValue.map(cv => {
+      if (cv.children.AutomatorCurrency) return cv.children.AutomatorCurrency[0].tokenType.$getter;
+      if (cv.children.variableReference) return this.visit(cv.children.variableReference);
+      const val = cv.children.$value;
+      if (typeof val === "string") {
+        if (val.startsWith("$")) return () => player.reality.automator.variables[val.slice(1)];
+        return () => player.reality.automator.constants[val];
+      }
+      return () => val;
+    });
+    // Some currencies are locked and should always evaluate to false if they're attempted to be used
+    const canUseInComp = ctx.compareValue.map(cv => {
+      if (cv.children.AutomatorCurrency) {
+        const unlockedFn = cv.children.AutomatorCurrency[0].tokenType.$unlocked;
+        return unlockedFn ? unlockedFn() : true;
+      }
+      // In this case, it's a constant (either automator-defined or literal)
+      return true;
+    });
+
+    if (!canUseInComp[0] || !canUseInComp[1]) return () => DC.D0;
+    const compareFun = ctx.NumberOperator[0].tokenType.$method;
     return () => compareFun(getters[0](), getters[1]());
   }
 

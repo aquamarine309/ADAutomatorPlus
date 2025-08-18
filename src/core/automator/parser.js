@@ -60,11 +60,16 @@ class AutomatorParser extends Parser {
       { ALT: () => $.CONSUME(T.ComparisonOperator) },
     ]), { resyncEnabled: false, });
 
-    $.RULE("comparison", () => {
-      $.SUBRULE($.compareValue);
-      $.CONSUME(T.ComparisonOperator);
-      $.SUBRULE2($.compareValue);
-    });
+    $.RULE("comparison", () => $.OR([
+      {
+        ALT: () => {
+          $.SUBRULE($.compareValue);
+          $.CONSUME(T.ComparisonOperator);
+          $.SUBRULE2($.compareValue);
+        }
+      },
+      { ALT: () => $.CONSUME(T.BooleanValue) }
+    ]));
 
     $.RULE("compareValue", () => $.OR([
       { ALT: () => $.CONSUME(T.NumberLiteral) },
@@ -109,7 +114,7 @@ class AutomatorParser extends Parser {
 
     $.RULE("studyRange", () => {
       $.CONSUME(T.NumberLiteral, { LABEL: "firstStudy" });
-      $.CONSUME(T.Dash);
+      $.CONSUME(T.OpMinus);
       $.CONSUME1(T.NumberLiteral, { LABEL: "lastStudy" });
     });
 
@@ -126,6 +131,7 @@ class AutomatorParser extends Parser {
     $.RULE("expression", () => {
       $.OR([
         { ALT: () => $.SUBRULE($.comparison) },
+        { ALT: () => $.SUBRULE($.mathExpression) },
         { ALT: () => $.CONSUME(T.NumberLiteral) },
         { ALT: () => $.CONSUME(T.StringLiteral) },
         { ALT: () => $.CONSUME(T.AutomatorCurrency) },
@@ -136,6 +142,12 @@ class AutomatorParser extends Parser {
     $.RULE("variableReference", () => {
       $.CONSUME(T.DollarSign);
       $.CONSUME(T.Identifier);
+    });
+    
+    $.RULE("mathExpression", () => {
+      $.SUBRULE($.compareValue);
+      $.CONSUME(T.NumberOperator);
+      $.SUBRULE1($.compareValue);
     });
     
     // Very important to call this after all the rules have been setup.

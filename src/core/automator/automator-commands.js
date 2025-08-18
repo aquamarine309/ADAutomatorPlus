@@ -48,7 +48,11 @@ function parseConditionalIntoText(ctx) {
     return `variable "${vari[0].children.Identifier[0].image}"`;
   }
   const comp = ctx.comparison[0].children;
+  if (comp.BooleanValue) {
+    return `Boolean ${comp.BooleanValue[0].image}`;
+  }
   const getters = comp.compareValue.map(cv => {
+    if (cv.children.variableReference) return () => "$".concat(cv.children.variableReference[0].children.Identifier[0].image);
     if (cv.children.AutomatorCurrency) return () => cv.children.AutomatorCurrency[0].image;
     const val = cv.children.$value;
     if (typeof val === "string") return () => val;
@@ -365,12 +369,6 @@ export const AutomatorCommands = [
     },
     validate: (ctx, V) => {
       ctx.startLine = ctx.Notify[0].startLine;
-      if (ctx.variableReference) {
-        return V.checkVariableType(
-          ctx.variableReference,
-          [AUTOMATOR_VAR_TYPES.STRING]
-        );
-      }
       return true;
     },
     compile: (ctx, C) => {
@@ -380,7 +378,7 @@ export const AutomatorCommands = [
         if (stringLiteral) {
           notifyText = stringLiteral[0].image;
         } else {
-          notifyText = C.visit(ctx.variableReference)();
+          notifyText = formatVariable(C.visit(ctx.variableReference)());
         }
         GameUI.notify.automator(`Automator: ${notifyText}`);
         AutomatorData.logCommandEvent(`NOTIFY call: ${notifyText}`, ctx.startLine);
@@ -897,6 +895,7 @@ export const AutomatorCommands = [
       $.CONSUME(T.Until);
       $.OR([
         { ALT: () => $.SUBRULE($.comparison) },
+        { ALT: () => $.SUBRULE($.variableReference) },
         { ALT: () => $.CONSUME(T.PrestigeEvent) },
       ]);
       $.CONSUME(T.LCurly);
@@ -906,12 +905,13 @@ export const AutomatorCommands = [
     },
     validate: (ctx, V) => {
       ctx.startLine = ctx.Until[0].startLine;
-      return V.checkBlock(ctx, ctx.Until);
+      return V.checkBlock(ctx, ctx.Until) && (!ctx.variableReference ||
+      V.checkVariableType(ctx.variableReference, [AUTOMATOR_VAR_TYPES.BOOLEAN]));
     },
     compile: (ctx, C) => {
       const commands = C.visit(ctx.block);
-      if (ctx.comparison) {
-        const evalComparison = C.visit(ctx.comparison);
+      if (ctx.comparison || ctx.variableReference) {
+        const evalComparison = C.visit(ctx.comparison || ctx.variableReference);
         return compileConditionLoop(() => !evalComparison(), commands, ctx, true);
       }
       const prestigeLevel = ctx.PrestigeEvent[0].tokenType.$prestigeLevel;
@@ -1097,7 +1097,10 @@ export const AutomatorCommands = [
     id: "whileLoop",
     rule: $ => () => {
       $.CONSUME(T.While);
-      $.SUBRULE($.comparison);
+      $.OR([
+        { ALT: () => $.SUBRULE($.comparison) },
+        { ALT: () => $.SUBRULE($.variableReference) }
+      ]);
       $.CONSUME(T.LCurly);
       $.CONSUME(T.EOL);
       $.SUBRULE($.block);
@@ -1105,9 +1108,10 @@ export const AutomatorCommands = [
     },
     validate: (ctx, V) => {
       ctx.startLine = ctx.While[0].startLine;
-      return V.checkBlock(ctx, ctx.While);
+      return V.checkBlock(ctx, ctx.While) && (!ctx.variableReference ||
+      V.checkVariableType(ctx.variableReference, [AUTOMATOR_VAR_TYPES.BOOLEAN]));
     },
-    compile: (ctx, C) => compileConditionLoop(C.visit(ctx.comparison), C.visit(ctx.block), ctx, false),
+    compile: (ctx, C) => compileConditionLoop(C.visit(ctx.comparison || ctx.variableReference), C.visit(ctx.block), ctx, false),
     blockify: (ctx, B) => {
       const commands = [];
       B.visit(ctx.block, commands);
@@ -1139,6 +1143,7 @@ export const AutomatorCommands = [
       
       return () => {
         const value = valueGetter();
+        AutomatorData.logCommandEvent(`Declared variable ${varName} to ${formatVariable(value)}`, ctx.startLine);
         player.reality.automator.variables[varName] = value;
         return AUTOMATOR_COMMAND_STATUS.NEXT_INSTRUCTION;
       };
@@ -1165,6 +1170,7 @@ export const AutomatorCommands = [
       const valueGetter = C.visit(ctx.expression);
       return () => {
         const value = valueGetter();
+        AutomatorData.logCommandEvent(`Assigned variable ${varName} to ${formatVariable(value)}`, ctx.startLine);
         player.reality.automator.variables[varName] = value;
         return AUTOMATOR_COMMAND_STATUS.NEXT_INSTRUCTION;
       };
@@ -1193,3 +1199,8 @@ export const AutomatorCommands = [
     })
   }
 ];
+
+function formatVariable(value) {
+  if (value instanceof Decimal) return format(value, 2, 2);
+  return value;
+}

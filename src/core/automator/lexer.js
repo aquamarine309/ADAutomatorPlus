@@ -76,10 +76,16 @@ const ComparisonOperator = createToken({
   pattern: Lexer.NA,
 });
 
+const NumberOperator = createToken({
+  name: "NumberOperator",
+  pattern: Lexer.NA,
+});
+
 const AutomatorCurrency = createCategory("AutomatorCurrency");
 const PrestigeEvent = createCategory("PrestigeEvent");
 const StudyPath = createCategory("StudyPath");
 const TimeUnit = createCategory("TimeUnit");
+const BooleanValue = createCategory("BooleanValue");
 
 createInCategory(ComparisonOperator, "OpGTE", />=/, {
   $autocomplete: ">=",
@@ -104,11 +110,33 @@ const OpEQ = createInCategory(ComparisonOperator, "OpEQ", /==/, {
 const EqualSign = createToken({
   name: "EqualSign",
   pattern: /=/,
-  categories: ComparisonOperator,
-  label: "=",
-  longer_alt: OpEQ,
+  label: "="
 });
-EqualSign.$compare = (a, b) => Decimal.eq(a, b);
+
+createInCategory(NumberOperator, "OpPlus", /\+/, {
+  $autocomplete: "+",
+  $method: (a, b) => Decimal.plus(a, b),
+});
+
+createInCategory(NumberOperator, "OpMinus", /-/, {
+  $autocomplete: "-",
+  $method: (a, b) => Decimal.minus(a, b),
+});
+
+createInCategory(NumberOperator, "OpMul", /\*/, {
+  $autocomplete: "*",
+  $method: (a, b) =>Decimal.mul(a, b),
+});
+
+createInCategory(NumberOperator, "OpDiv", /\//, {
+  $autocomplete: "/",
+  $method: (a, b) => Decimal.div(a, b),
+});
+
+createInCategory(NumberOperator, "OpMod", /%/, {
+  $autocomplete: "%",
+  $method: (a, b) => [a, b].some(x => Decimal.abs(x).gt(Number.MAX_SAFE_INTEGER)) ? DC.D0 : new Decimal(a.toNumber() % b.toNumber()),
+});
 
 createInCategory(AutomatorCurrency, "EP", /ep/i, { $getter: () => Currency.eternityPoints.value });
 createInCategory(AutomatorCurrency, "IP", /ip/i, { $getter: () => Currency.infinityPoints.value });
@@ -275,6 +303,16 @@ createInCategory(TimeUnit, "Hours", /h(ours?)?/i, {
   $scale: 3600 * 1000,
 });
 
+createInCategory(BooleanValue, "True", /true/i, {
+  $autocomplete: "true",
+  $value: true,
+});
+
+createInCategory(BooleanValue, "False", /false/i, {
+  $autocomplete: "false",
+  $value: false,
+});
+
 const Keyword = createToken({
   name: "Keyword",
   pattern: Lexer.NA,
@@ -305,6 +343,7 @@ createKeyword("Blob", /blob\s\s/i, {
 });
 createKeyword("If", /if/i);
 createKeyword("Else", /else/i);
+createKeyword("Modify", /modify/i);
 createKeyword("Load", /load/i);
 createKeyword("Notify", /notify/i);
 createKeyword("Nowait", /nowait/i);
@@ -355,7 +394,6 @@ const LCurly = createToken({ name: "LCurly", pattern: /[ \t]*{/ });
 const RCurly = createToken({ name: "RCurly", pattern: /[ \t]*}/ });
 const Comma = createToken({ name: "Comma", pattern: /,/ });
 const Pipe = createToken({ name: "Pipe", pattern: /\|/, label: "|" });
-const Dash = createToken({ name: "Dash", pattern: /-/, label: "-" });
 const Exclamation = createToken({ name: "Exclamation", pattern: /!/, label: "!" });
 const DollarSign = createToken({ name: "DollarSign", pattern: /\$/ });
 
@@ -363,8 +401,10 @@ const DollarSign = createToken({ name: "DollarSign", pattern: /\$/ });
 export const automatorTokens = [
   HSpace, StringLiteral, StringLiteralSingleQuote, Comment, EOL,
   ComparisonOperator, ...tokenLists.ComparisonOperator,
-  LCurly, RCurly, Comma, DollarSign, EqualSign, Pipe, Dash, Exclamation,
+  NumberOperator, ...tokenLists.NumberOperator,
+  LCurly, RCurly, Comma, DollarSign, EqualSign, Pipe, Exclamation,
   BlackHoleStr, NumberLiteral,
+  BooleanValue, ...tokenLists.BooleanValue,
   AutomatorCurrency, ...tokenLists.AutomatorCurrency,
   ECLiteral,
   Keyword, ...keywordTokens,

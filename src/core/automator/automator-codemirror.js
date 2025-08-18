@@ -16,7 +16,6 @@ function walkSuggestion(suggestion, prefix, output) {
 CodeMirror.registerHelper("lint", "automato", (contents, _, editor) => {
   const doc = editor.getDoc();
   const errors = compile(contents, true).errors;
-  return [];
   return errors.map(e => ({
     message: e.info,
     severity: "error",
